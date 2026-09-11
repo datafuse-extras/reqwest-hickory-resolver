@@ -65,7 +65,7 @@ pub struct HickoryResolver {
     state: Arc<OnceLock<TokioResolver>>,
 
     opts: Option<ResolverOpts>,
-    rng: Option<rand::rngs::SmallRng>,
+    shuffle: bool,
 }
 
 impl HickoryResolver {
@@ -75,15 +75,11 @@ impl HickoryResolver {
         self
     }
 
-    /// Enable shuffle for the hickory resolver to make sure the ip addrs returned are shuffled.
+    /// Randomize the address order on each resolution, including cached lookups.
     ///
     /// NOTES: introduce shuffle will add extra overhead like more allocations and shuffling.
     pub fn with_shuffle(mut self, shuffle: bool) -> Self {
-        if shuffle {
-            use rand::SeedableRng;
-            self.rng = Some(rand::rngs::SmallRng::from_os_rng());
-        }
-
+        self.shuffle = shuffle;
         self
     }
 
@@ -110,7 +106,7 @@ impl HickoryResolver {
 
 impl Resolve for HickoryResolver {
     fn resolve(&self, name: Name) -> Resolving {
-        let mut hickory_resolver = self.clone();
+        let hickory_resolver = self.clone();
         Box::pin(async move {
             let resolver = hickory_resolver
                 .state
@@ -118,12 +114,13 @@ impl Resolve for HickoryResolver {
 
             let lookup = resolver.lookup_ip(name.as_str()).await?;
 
-            let addrs: Addrs = if let Some(rng) = &mut hickory_resolver.rng {
+            let addrs: Addrs = if hickory_resolver.shuffle {
                 use rand::seq::SliceRandom;
 
                 // Collect all the addresses into a vector and shuffle them.
                 let mut ips = lookup.into_iter().collect::<Vec<_>>();
-                ips.shuffle(rng);
+                // Reuse the current thread's RNG so its state advances across lookups.
+                ips.shuffle(&mut rand::rng());
 
                 Box::new(ips.into_iter().map(|addr| SocketAddr::new(addr, 0)))
             } else {
