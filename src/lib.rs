@@ -108,7 +108,7 @@ impl Resolve for HickoryResolver {
             let lookup = resolver.lookup_ip(name.as_str()).await?;
             let mut ips = lookup.iter().collect::<Vec<_>>();
             if shuffle {
-                // Use advancing thread-local state instead of cloning an RNG per lookup.
+                // Reuse the current thread's RNG so its state advances across lookups.
                 ips.shuffle(&mut rand::rng());
             }
             Ok(Box::new(ips.into_iter().map(|addr| SocketAddr::new(addr, 0))) as Addrs)
